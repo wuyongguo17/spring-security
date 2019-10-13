@@ -1,0 +1,741 @@
+1，RESTful的特点：
+	(1)用URL描述资源。
+	(2)使用HTTP方法描述行为，使用HTTP状态码来表示不同的结果。
+		GET、POST、PUT、DELETE分别代表查，增，改，删
+	(3)使用JSON交互数据
+	(4)RESTful只是一种风格，并不是强制的标准。
+
+2，@JsonView 的使用 包是com.fasterxml.jackson.annotation.JsonView;  用途：用于控制显示对象的属性，想显示哪些属性或者屏蔽掉哪些属性
+	public class User {
+		public interface UserSimpleView{};
+		public interface UserDetailView extends UserSimpleView{};
+		
+		private String username;
+		private String password;
+		
+		@JsonView(UserSimpleView.class)
+		public String getUsername() {
+			return username;
+		}
+		public void setUsername(String username) {
+			this.username = username;
+		}
+		
+		@JsonView(UserDetailView.class)
+		public String getPassword() {
+			return password;
+		}
+		public void setPassword(String password) {
+			this.password = password;
+		}	
+	}
+
+	@RequestMapping(value = "/user/{id:\\d+}",method = RequestMethod.GET)
+	@JsonView(UserDetailView.class) 
+	public User getInfo(@PathVariable String id) {
+		User user = new User();
+		user.setUsername("tom");
+		return user;
+	}
+
+3，@NotBlank 不为空校验 包为org.hibernate.validator.constraints.NotBlank ,直接加在属性上
+	public class User {
+		public interface UserSimpleView{};
+		public interface UserDetailView extends UserSimpleView{};
+		
+		private String username;
+		@NotBlank(message = "密码不能为空")   //message可以自定义错误消息
+		private String password;
+		private String id;
+		private Date birthday;
+	}
+
+  @NotBlank要配合 @Valid 包为javax.validation.Valid才生效
+	@PostMapping("/user")
+	public User create(@Valid @RequestBody User user) {
+		System.out.println(user.getUsername());
+		System.out.println(user.getPassword());
+		System.out.println(user.getId());
+		System.out.println(user.getBirthday());
+		user.setId("1");
+		return user;
+	}
+
+  @NotBlank和 @Valid配合使用时，当校验不通过是不会进入我们的方法的，如果要想进入方法要使用BindingResult (org.springframework.validation.BindingResult)。
+  校验不通过的错误信息会放到BindingResult中，此时会进入方法中，并且不会报错。
+	@PostMapping("/user")
+	public User create(@Valid @RequestBody User user,BindingResult errors) {
+		if(errors.hasErrors()) {
+			errors.getAllErrors().stream().forEach(error -> System.out.print(error.getDefaultMessage()));
+		}
+		
+		System.out.println(user.getUsername());
+		System.out.println(user.getPassword());
+		System.out.println(user.getId());
+		System.out.println(user.getBirthday());
+		user.setId("1");
+		return user;
+	}
+
+  其他的验证注解可以参见Hibernate Validator
+
+4，使用Hibernate Validator自定义注解。
+第一步：@Target({ElementType.METHOD,ElementType.FIELD})
+	@Retention(RetentionPolicy.RUNTIME)
+	@Constraint(validatedBy = MyConstraintValidator.class) //validatedBy表示当我们加上该注解时，执行的逻辑在哪个类上
+	public @interface MyConstraint {
+		String message();
+
+		Class<?>[] groups() default { };
+
+		Class<? extends Payload>[] payload() default { };
+		//以上三个属性是必须的
+	}
+
+
+第二步： //第一个泛型表示自定义的注解，第二个泛型表示使用该注解的属性的类型
+	//该校验器可以注入Spring的任何对象，因为我们实现了ConstraintValidator，Spring会自动管理我们的校验器，而不需要添加@Component注解
+	public class MyConstraintValidator implements ConstraintValidator<MyConstraint, Object>{
+		@Autowired
+		private HelloService HelloService;
+		
+		@Override
+		public void initialize(MyConstraint constraintAnnotation) {
+			System.out.println("my validator init");
+		}
+		
+		//校验逻辑在这里写，value表示要校验的值
+		@Override
+		public boolean isValid(Object value, ConstraintValidatorContext context) {
+			HelloService.greeting("tom");
+			System.out.println(value);
+			return false; //返回false表示校验失败
+		}
+
+	}
+
+5，Restful API异常处理：
+	当使用浏览器访问，发生404错误时，springboot默认给一个错误页面，我们可以自定义自己的错误页面，只要在src/main/resources下在建一个html页面：resources/error/404.html，即可。
+	相应的有500.html等。
+	
+	//springboot自定义异常的相应
+	@ControllerAdvice //表示当前类负责处理其他controller抛出的异常
+	public class ControllerExceptionHandler {
+		
+		@ExceptionHandler(UserNotExistException.class) //表示任何一个控制器抛出UserNotExistException异常时，进入这个方法来处理。
+		@ResponseBody
+		@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+		public Map<String,Object> handlerUserNotExistException(UserNotExistException ex){
+			Map<String,Object> result = new HashMap<>();
+			result.put("id",ex.getId());
+			result.put("message", ex.getMessage());
+			return result;
+		}
+	}
+
+
+6，Restful API的拦截：
+	6.1 使用过滤器(Filter):
+		
+		@Component //加到spring中管理
+		public class TimeFilter implements Filter {
+
+			@Override
+			public void init(FilterConfig filterConfig) throws ServletException {
+				System.out.println("time filter init");
+			}
+
+			@Override
+			public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+					throws IOException, ServletException {
+				System.out.println("time filter start");
+				long start = new Date().getTime();
+				chain.doFilter(request, response);
+				System.out.println("time filter耗时:" + (new Date().getTime() - start));
+				System.out.println("time filter finish");
+			}
+
+			@Override
+			public void destroy() {
+				System.out.println("time fulter destory");
+			}
+
+		}
+
+		如果使用第三方的过滤器，可能会没有@Component注解，那么如何加入到我们的项目中呢？如下：
+		@Configuration
+		public class WebConfig {
+			@Bean
+			public FilterRegistrationBean timeFilter() {
+				FilterRegistrationBean filterRegistrationBean = new FilterRegistrationBean();
+				TimeFilter timeFilter = new TimeFilter();
+				filterRegistrationBean.setFilter(timeFilter);
+				return null;
+				
+			}
+		}
+
+		这种的方式的问题是：只能获取requst,response相关的，不会知道服务是进入哪个控制器的哪个方法。
+
+	6.2  使用拦截器(interceptor)：
+		@Component
+		public class TimeInterceptor implements HandlerInterceptor {
+
+			@Override
+			public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
+					throws Exception {
+				System.out.println("preHandler");
+				System.out.println(((HandlerMethod)handler).getBean().getClass().getName());
+				System.out.println(((HandlerMethod)handler).getMethod().getName());
+				request.setAttribute("startTime", new Date().getTime());
+				return false;
+			}
+			
+			//控制器方法调用之后调用（如果方法抛出了异常这里就不会被调用了）
+			@Override
+			public void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler,
+					ModelAndView modelAndView) throws Exception {
+				System.out.println("postHandle");
+				Long start = (Long) request.getAttribute("startTime");
+				System.out.println("time interceptor耗时:"+(new Date().getTime() - start));
+			}
+			
+			//与上面刚好相反，也是控制器方法调用之后调用，但是抛出了异常也会被调用
+			@Override
+			public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
+					throws Exception {
+				System.out.println("afterCompletion");
+				Long start = (Long) request.getAttribute("startTime");
+				System.out.println("time interceptor耗时:"+(new Date().getTime() - start));
+				System.out.println("ex is" + ex);
+		}
+		
+		只有一个@Component还不起作用，还要这样配置：
+			@Configuration
+			public class WebConfig extends WebMvcConfigurerAdapter{
+				@Autowired
+				private TimeInterceptor timeInterceptor;
+				
+				@Override
+				public void addInterceptors(InterceptorRegistry registry) {
+					registry.addInterceptor(timeInterceptor);
+				}
+			}
+
+	      interceptor的缺点，无法获取具体的参数的值(使用handler无法获取)
+
+	 6.3 切片(Aspect)：
+		@Aspect
+		@Component
+		public class TimeAspect {
+			//切入点:1,在哪些方法上起作用。2，在什么时候起作用
+			
+			@Around("execution(* com.imooc.web.controller.UserController.*(..))")
+			public Object handlerControllerMethod(ProceedingJoinPoint pjp) throws Throwable {  //pjp表示拦截住的方法的对象，相当于使用intercceptor时，方法中的handler。
+				System.out.println("time aspect start");
+				
+				Object[] args = pjp.getArgs();
+				
+				for (Object arg : args) {
+					System.out.println("arg is" + " " + arg);
+				}
+				
+				long start = new Date().getTime();
+				
+				//返回的object表示所调用的controller方法中的返回值
+				Object object = pjp.proceed(); //相当于使用Filter时的chain.doFilter(request, response);
+				
+				
+				System.out.println("time aspect耗时:" + (new Date().getTime() - start));
+				
+				System.out.println("time aspect end");
+				
+				return object;
+			}
+		}
+		切片的缺点：拿不到request和response
+
+	以上拦截的执行顺序是：Filter -> Interceptor -> Aspect -> Controller 。 如果Controller抛出异常，会反向执行。并且加了一个ControllerAdvice
+			     有异常时的返回顺序：Controller -> Aspect -> Interceptor -> Filter 。
+
+
+7，异步处理REST服务：使用服务器的吞吐量明显的提升：
+	1，Runable方式(副线程写在主线程里)
+	@RequestMapping("/order")
+	public Callable<String> order() throws Exception {
+		logger.info("主线程开始");
+		Callable<String> result = new Callable<String>() {
+			//主线程瞬间返回，副线程执行了1秒，这样主线程可以有时间来处理其他的请求。
+			@Override
+			public String call() throws Exception {
+				logger.info("副线程开始");
+				Thread.sleep(1000);
+				logger.info("副线程返回");
+				return "success";
+			}
+		};
+		
+		logger.info("主线程返回");
+		return result;
+	}
+
+
+	2，DeferredResult：详见项目
+
+8，使用swagger自动生成html文档，使用WireMock快速伪造Restful服务。
+	项目引入swagger:
+	@SpringBootApplication
+	@RestController
+	@EnableSwagger2  //引入swagger
+	public class DemoApplication {
+
+		/**
+		 * @param args
+		 */
+		public static void main(String[] args) {
+			SpringApplication.run(DemoApplication.class, args);
+		}
+		
+		@GetMapping("/hello")
+		public String hello() {
+			return "hello spring security";
+		}
+
+	}
+	引入后这么访问：localhost:8060/swagger-ui.html
+	swagger常用的注解：
+	1，@ApiOperation：常用在方法上
+	
+	@RequestMapping(value = "/user", method = RequestMethod.GET)
+	@JsonView(UserSimpleView.class)
+	@ApiOperation(value = "用户查询") //value值会代替方法名显示
+	public List<User> query(UserQueryCondition condition,@PageableDefault(page = 2,size = 17,sort = "username,asc") Pageable pageable){
+		System.out.println(ReflectionToStringBuilder.toString(condition,ToStringStyle.MULTI_LINE_STYLE));
+		System.out.println(pageable.getPageSize());
+		System.out.println(pageable.getPageNumber());
+		System.out.println(pageable.getSort());
+		List<User> users = new ArrayList<>();
+		users.add(new User());
+		users.add(new User());
+		users.add(new User());
+		return users;
+	}
+
+	2，@ApiModelProperty 用在对象中，当我们的参数是封装在一个对象时使用
+	public class UserQueryCondition {
+		private String username;
+		@ApiModelProperty(value = "用户年龄起始值")
+		private int age;
+		@ApiModelProperty(value = "用户年龄终止值")
+
+	}
+
+	3，@ApiParam ：当我们的参数就是一个基本类型(或者某些引用类型时)时：
+		public User getInfo(@ApiParam(value = "用户id") @PathVariable String id) {
+			System.out.println("进入getInfo服务");
+	//		throw new RuntimeException("user not exsit");
+	//		throw new UserNotExistException(id); //这个异常被ControllerExceptionHandler处理，所以afterCompletion()中的ex是空的。
+			User user = new User();
+			user.setUsername("tom");
+			return user;
+		}
+
+     WirMock的使用：
+	首先下载好jar包，在命令行窗口输入：java -jar wiremock-standalone-2.21.0.jar --port 8062  (端口号为自定义的)。
+	示例：
+	public class MockServer {
+	public static void main(String[] args) throws IOException {
+		configureFor(8062); //端口号，WireMock设置的端口号
+		removeAllMappings(); //清掉以前的配置
+		
+		mock("/order/1", "01");
+		mock("/order/2", "02");
+	}
+
+	private static void mock(String url, String file) throws IOException {
+		ClassPathResource resource = new ClassPathResource("/mock/response/"+file+".txt");
+		String content = StringUtils.join(FileUtils.readLines(resource.getFile(),"utf-8").toArray(),"\n");//从文件中读取内容
+		stubFor(get(urlPathEqualTo(url)).willReturn(aResponse().withBody(content).withStatus(200)));
+	}
+}
+
+
+9，SpringSecurity：
+	//表单形式任何请求都认证且需要授权，才能访问。
+	http.formLogin()
+		.and()
+		.authorizeRequests()
+		.anyRequest()
+		.authenticated();
+	
+	//httpBasic形式登录
+	http.httpBasic()
+	.and()
+	.authorizeRequests()
+	.anyRequest()
+	.authenticated();
+  
+  springSecutiry过滤器链：
+	   springSecurity的一系列过滤器中的最后一个过滤器是FilterSecurityInterceptor，该过滤器最终决定了我们的请求能不能访问我们的服务。
+	   FilterSecurityInterceptor之前的一个过滤器是ExceptionTranslationFilter，用来捕获FilterSecurityInterceptor所抛出的异常，并做相应的处理。
+
+  
+  认证：用到的接口UserDetailsService、UserDetails
+	@Component
+	public class MyUserDetailsService implements UserDetailsService {
+		
+		private Logger logger = LoggerFactory.getLogger(getClass());
+		
+		@Autowired
+		private PasswordEncoder passwordEncoder;
+		
+		@Override
+		public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+			logger.info("登录用户名:" + username);
+			//根据用户名查找用户信息
+	//		return new User(username, "123456", AuthorityUtils.commaSeparatedStringToAuthorityList("admin"));
+			String password = passwordEncoder.encode("123456");
+			logger.info("数据库密码是:" + password);
+			//根据查找到的用户信息判断用户是否被冻结
+			return new User(username, password, true, true, true, true, AuthorityUtils.commaSeparatedStringToAuthorityList("admin"));
+		}
+
+	}
+
+  加密解密：用到的接口 PasswordEncoder
+	@Configuration
+	public class BrowserSecurityConfig extends WebSecurityConfigurerAdapter {
+		
+		@Bean
+		public PasswordEncoder passwordEncoder() {
+			return new BCryptPasswordEncoder();
+		}
+
+	}
+
+
+10，SpringSecurity个性化用户认证流程：
+	10.1，自定义登录页面：在resources下建立imooc-signIn.html页面
+		http.formLogin()
+			.loginPage("/imooc-signIn.html")
+			.loginProcessingUrl("/authentication.form") //表示该请求使用UsernamePasswordAuthenticationFilter来处理
+			.and()
+			.authorizeRequests()
+			.antMatchers("/imooc-signIn.html").permitAll() //表示访问/imooc-signIn.html时，不需要身份认证。
+			.anyRequest()
+			.authenticated()
+			.and()
+			.csrf().disable();
+
+		以上存在的问题：
+		1，所有项目会共用登录页面，不符合实际使用情况。
+		
+		2，我们要处理不同的请求，是html页面引发的请求我们就返回html页面，不是我们返回状态码。
+
+		以上两个问题一起解决如下：
+                
+		http.formLogin()
+//			.loginPage("/imooc-signIn.html")
+			.loginPage("/authentication/require") //使用一个controller来处理
+			.loginProcessingUrl("/authentication.form") //表示该请求使用UsernamePasswordAuthenticationFilter来处理
+			.and()
+			.authorizeRequests()
+			.antMatchers("/authentication/require",
+					securityPropertites.getBrowser().getLoginPage()).permitAll() //表示访问/imooc-signIn.html时，不需要身份认证。
+			.anyRequest()
+			.authenticated()
+			.and()
+			.csrf().disable();
+		
+		Controller如下：
+		@RestController
+		public class BrowserSecurityController {
+			
+			private Logger logger = LoggerFactory.getLogger(getClass());
+			
+			//请求会缓存到这里
+			private RequestCache requestCache = new HttpSessionRequestCache();
+			
+			private RedirectStrategy redirectStrategy = new DefaultRedirectStrategy();
+			
+			@Autowired
+			private SecurityPropertites securityPropertites; 
+			
+			/**
+			 * 当需要身份认证时跳转到这里
+			 * @param request
+			 * @param response
+			 * @return
+			 * @throws IOException 
+			 */
+			@RequestMapping("/authentication/require")
+			@ResponseStatus(code = HttpStatus.UNAUTHORIZED)
+			public SimpleResponse requireAuthentication(HttpServletRequest request,HttpServletResponse response) throws IOException {
+				
+				SavedRequest savedRequest = requestCache.getRequest(request, response);
+				if(savedRequest != null) {
+					String target = savedRequest.getRedirectUrl();
+					logger.info("引发跳转的请求是："+target);
+					if(StringUtils.endsWithIgnoreCase(target, ".html")) {
+						redirectStrategy.sendRedirect(request, response, securityPropertites.getBrowser().getLoginPage());
+					}
+				}
+				return new SimpleResponse("访问的服务需要身份认证，请引导用户到登录页");
+				
+			}
+		}
+
+	   application.properties文件设置：imooc.security.browser.loginPage = /demo-signIn.html
+	 
+	@ConfigurationProperties(prefix = "imooc.security")
+	public class SecurityPropertites {
+		private BrowserProperties browser = new BrowserProperties();
+
+		public BrowserProperties getBrowser() {
+			return browser;
+		}
+
+		public void setBrowser(BrowserProperties browser) {
+			this.browser = browser;
+		}
+	}
+
+
+	@Configuration
+	@EnableConfigurationProperties(SecurityPropertites.class) //使SecurityPropertites生效
+	public class SecurityCoreConfig {
+
+	}
+
+	public class BrowserProperties {
+		private String loginPage = "/imooc-signIn.html"; //设置默认值
+
+		public String getLoginPage() {
+			return loginPage;
+		}
+
+		public void setLoginPage(String loginPage) {
+			this.loginPage = loginPage;
+		}
+		
+	
+	}
+
+
+
+	10.2，自定义登录成功处理，要实现AuthenticationSuccessHandler接口
+		@Component
+	第一步	public class ImoocAuthenticationSuccessHandler implements AuthenticationSuccessHandler {
+			private Logger logger = LoggerFactory.getLogger(getClass());
+			
+			@Autowired
+			private ObjectMapper objectMapper; //springMVC在启动时会自动注册，我们使用@Autowired注解就可以获得
+			
+			/**
+			 * 登录成功会调用该方法，返回的UserDetails是包装在下面的参数authentication中的
+			 */
+			@Override
+			public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
+					Authentication authentication) throws IOException, ServletException {
+					logger.info("登录成功");
+					
+					response.setContentType("application/json;charset=UTF-8");
+					//将authentication写成json字符串
+					response.getWriter().write(objectMapper.writeValueAsString(authentication));
+			}	
+
+		}
+
+         第二步：注入到配置中
+	 public class BrowserSecurityConfig extends WebSecurityConfigurerAdapter {
+	
+		@Autowired
+		private SecurityPropertites securityPropertites;
+		
+		@Autowired
+		private ImoocAuthenticationSuccessHandler imoocAuthenticationSuccessHandler;
+
+		//以下为部分代码
+		http.formLogin()
+//			.loginPage("/imooc-signIn.html")
+			.loginPage("/authentication/require") //使用一个controller来处理
+			.loginProcessingUrl("/authentication.form") //表示该请求使用UsernamePasswordAuthenticationFilter来处理
+			.successHandler(imoocAuthenticationSuccessHandler) //使用我们自己成功处理器(当表单登录成功时)
+	}
+
+
+	10.3，自定义登录失败处理，实现AuthenticationFailureHandler接口，与上面的类似。参考项目
+	
+
+	10.4，登录成功或者失败是返回json还是跳转我们可以这样处理：
+		成功的：	
+		@Component
+		public class ImoocAuthenticationSuccessHandler extends SavedRequestAwareAuthenticationSuccessHandler /* implements AuthenticationSuccessHandler */ {
+			private Logger logger = LoggerFactory.getLogger(getClass());
+			
+			@Autowired
+			private ObjectMapper objectMapper; //springMVC在启动时会自动注册，我们使用@Autowired注解就可以获得
+			
+			@Autowired
+			private SecurityPropertites securityPropertites;
+			
+			/**
+			 * 登录成功会调用该方法，返回的UserDetails是包装在下面的参数authentication中的
+			 */
+			
+			  @Override 
+			  public void onAuthenticationSuccess(HttpServletRequest request,
+			  HttpServletResponse response, Authentication authentication) throws
+			  IOException, ServletException { 
+				  
+				  logger.info("登录成功");
+				  if(LoginType.JSON.equals(securityPropertites.getBrowser().getLoginType())) {
+					  response.setContentType("application/json;charset=UTF-8");
+					  //将authentication写成json字符串
+					  response.getWriter().write(objectMapper.writeValueAsString(authentication));
+				  }else {
+					  //调用父类的方法，父类默认是跳转的(跳到你一开始访问的那个地址)
+					  super.onAuthenticationSuccess(request, response, authentication);
+				  }
+				  
+				 
+			  }
+			 
+
+		}
+
+		失败的：
+		@Component("imoocAuthenticationFailureHandler")
+		public class ImoocAuthenticationFailureHandler extends SimpleUrlAuthenticationFailureHandler /* implements AuthenticationFailureHandler */ {
+			private Logger logger = LoggerFactory.getLogger(getClass());
+			
+			@Autowired
+			private ObjectMapper objectMapper;
+			
+			@Autowired
+			private SecurityPropertites securityPropertites;
+			
+			@Override
+			public void onAuthenticationFailure(HttpServletRequest request, HttpServletResponse response,
+					AuthenticationException exception) throws IOException, ServletException {
+				logger.info("登录失败");
+				
+				if(LoginType.JSON.equals(securityPropertites.getBrowser().getLoginType())) {
+					response.setStatus(HttpStatus.INTERNAL_SERVER_ERROR.value());
+					response.setContentType("application/json;charset=UTF-8");
+					//将authentication写成json字符串
+					response.getWriter().write(objectMapper.writeValueAsString(exception));
+				}else {
+					//调用父类，springboot默认的方式
+					super.onAuthenticationFailure(request, response, exception);
+				}
+				
+			}
+
+		}
+
+
+
+11，生成图形验证码：
+	11.1	根据随机数生成图片
+		private ImageCode createImageCode(HttpServletRequest request) {
+			//图片的长和高
+			int width = 67; 
+			int height = 23;
+			BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+
+			Graphics g = image.getGraphics();
+
+			Random random = new Random();
+
+			g.setColor(getRandColor(200, 250));
+			g.fillRect(0, 0, width, height);
+			g.setFont(new Font("Times New Roman", Font.ITALIC, 20));
+			g.setColor(getRandColor(160, 200));
+			for (int i = 0; i < 155; i++) {
+				int x = random.nextInt(width);
+				int y = random.nextInt(height);
+				int xl = random.nextInt(12);
+				int yl = random.nextInt(12);
+				g.drawLine(x, y, x + xl, y + yl);
+			}
+
+			String sRand = "";
+			/*
+			 * for (int i = 0; i < securityProperties.getCode().getImage().getLength(); i++)
+			 * { String rand = String.valueOf(random.nextInt(10)); sRand += rand;
+			 * g.setColor(new Color(20 + random.nextInt(110), 20 + random.nextInt(110), 20 +
+			 * random.nextInt(110))); g.drawString(rand, 13 * i + 6, 16); }
+			 */
+			
+			for (int i = 0; i < 4; i++) {
+				String rand = String.valueOf(random.nextInt(10));
+				sRand += rand;
+				g.setColor(new Color(20 + random.nextInt(110), 20 + random.nextInt(110), 20 + random.nextInt(110)));
+				g.drawString(rand, 13 * i + 6, 16);
+			}
+			
+			
+			g.dispose();
+
+	//		return new ImageCode(image, sRand, securityProperties.getCode().getImage().getExpireIn());
+			return new ImageCode(image, sRand, 60);
+			
+		}
+	
+		/**
+		 * 生成随机背景条纹
+		 * 
+		 * @param fc
+		 * @param bc
+		 * @return
+		 */
+		private Color getRandColor(int fc, int bc) {
+			Random random = new Random();
+			if (fc > 255) {
+				fc = 255;
+			}
+			if (bc > 255) {
+				bc = 255;
+			}
+			int r = fc + random.nextInt(bc - fc);
+			int g = fc + random.nextInt(bc - fc);
+			int b = fc + random.nextInt(bc - fc);
+			return new Color(r, g, b);
+		}	
+
+
+
+	11.2	将随机数存到Session中
+		private static final String SESSION_KEY = "SESSION_KEY_IMAGE_CODE";
+		
+		private SessionStrategy sessionStrategy = new HttpSessionSessionStrategy();
+		sessionStrategy.setAttribute(new ServletWebRequest(request), SESSION_KEY, imageCode);
+
+
+	11.3	将生成的图片写到接口的相应中
+		ImageIO.write(imageCode.getImage(), "JPEG", response.getOutputStream());
+
+		对验证码的校验，springSecurity并没有提供我们接口，需要我们要自己写一个过滤器：
+
+
+
+12，记住我功能：
+	@Bean
+	public PersistentTokenRepository persistentTokenRepository() {
+		JdbcTokenRepositoryImpl tokenRepository = new JdbcTokenRepositoryImpl();
+		tokenRepository.setDataSource(dataSource);
+		//启动时创建表
+		tokenRepository.setCreateTableOnStartup(true);
+		return tokenRepository;
+	}
+
+	//记住我功能
+	.rememberMe()
+	.tokenRepository(persistentTokenRepository())
+	.tokenValiditySeconds(securityPropertites.getBrowser().getRememberMeSeconds())
+	.userDetailsService(userDetailsService)
+
+
+13，短信验证码登录：不能用springSecurity。只能自己写逻辑
+	

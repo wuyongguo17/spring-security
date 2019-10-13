@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>登录</title>
+</head>
+<body>
+	<h2>登录表单</h2>
+	
+	<form action="/authentication/form" method="post">
+		<table>
+			<tr>
+				<td>用户名:</td> 
+				<td><input type="text" name="username"></td>
+			</tr>
+			<tr>
+				<td>密码:</td>
+				<td><input type="password" name="password"></td>
+			</tr>
+			<tr>
+				<td>图形验证码</td>
+				<td>
+					<input type="text" name=imageCode>
+					<img src="/code/image?width=200">  <!-- 控制器的请求@GetMapping("/code/image") -->
+				</td>
+			</tr>
+			<tr>
+				<!-- name="remember-me"是固定名称的 -->
+				<td colspan='2'><input name="remember-me" type="checkbox" value="true" />记住我</td>
+			</tr>
+			<tr>
+				<td colspan="2">
+					<button type="submit">登录</button>
+				</td>
+			</tr>
+		</table>
+	</form>
+	
+	<h3>短信登录</h3>
+	<form action="/authentication/mobile" method="post">
+		<table>
+			<tr>
+				<td>手机号:</td>
+				<td><input type="text" name="mobile" value="13012345678"></td>
+			</tr>
+			<tr>
+				<td>短信验证码:</td>
+				<td>
+					<input type="text" name="smsCode">
+					<a href="/code/sms?mobile=13012345678">发送验证码</a>
+				</td>
+			</tr>
+			<tr>
+				<td colspan="2"><button type="submit">登录</button></td>
+			</tr>
+		</table>
+	</form>
+	<br>
+	<h3>社交登录</h3>
+	<!-- /auth请求开头会默认被SocialAuthenticationFilter拦截(源代码：private static final String DEFAULT_FILTER_PROCESSES_URL = "/auth";) -->
+	<!-- /qq表示的是qqConfig.getProviderId()的providerId
+	@Override
+	protected ConnectionFactory<?> createConnectionFactory() {
+		QQProperties qqConfig = securityProperties.getSocial().getQq();
+		return new QQConnectionFactory(qqConfig.getProviderId(), qqConfig.getAppId(), qqConfig.getAppSecret());
+	} -->
+	<!-- <a href="/auth/qq">QQ登录</a> -->
+	<a href="/qqLogin/callback.do">QQ登录</a>
+</body>
+</html>
